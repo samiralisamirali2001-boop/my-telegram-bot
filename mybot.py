@@ -1,76 +1,48 @@
-import os
+import telebot
 import yt_dlp
-import asyncio
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+import os
+import time
 
-TOKEN = '8503436459:AAFbCtsho5jS93J467v6rpxtIjseibXbj8Y'
+# ضع التوكن الجديد هنا
+API_TOKEN = '8503436459:AAFbCtsho5jS93J467v6rpxtIjseibXbj8Y'
+bot = telebot.TeleBot(API_TOKEN)
 
-async def download_content(url, mode):
-    # مسح أي ملفات قديمة لتجنب تضارب الأسماء
-    for f in ['file.mp4', 'file.mp3']:
-        if os.path.exists(f): os.remove(f)
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "✨ أهلاً بك! أنا بوت تحميل الفيديوهات.\n\nفقط أرسل لي رابط الفيديو من (YouTube, Instagram, TikTok) وسأقوم بتحميله لك فوراً! 🚀")
 
-    if mode == 'video':
-        ydl_opts = {
-            'format': 'best[ext=mp4][filesize<45M]/best',
-            'outtmpl': 'file.mp4'
-        }
-    else:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'outtmpl': 'file' # سيتم إنتاجه باسم file.mp3 تلقائياً
-        }
+@bot.message_handler(func=lambda message: True)
+def download_video(message):
+    url = message.text
+    if "http" not in url:
+        return
+
+    msg = bot.reply_to(message, "⏳ جاري المعالجة والتحميل... انتظر قليلاً.")
     
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        await asyncio.to_thread(ydl.extract_info, url, download=True)
-        return 'file.mp4' if mode == 'video' else 'file.mp3'
+    ydl_opts = {
+        'format': 'best',
+        'outtmpl': 'video.mp4',
+        'quiet': True
+    }
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text
-    if "youtube.com" in url or "youtu.be" in url:
-        context.user_data['url'] = url
-        keyboard = [
-            [InlineKeyboardButton("🎥 فيديو (MP4)", callback_data='video')],
-            [InlineKeyboardButton("🎵 مقطع صوتي (MP3)", callback_data='audio')],
-            [InlineKeyboardButton("🎤 رسالة صوتية (Voice)", callback_data='voice')]
-        ]
-        await update.message.reply_text("اختر الصيغة المطلوبة:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    mode = query.data
-    url = context.user_data.get('url')
-    
-    msg = await query.edit_message_text(f"⏳ جاري تجهيز {mode}... يرجى الانتظار")
-    
     try:
-        path = await download_content(url, mode)
-        if not os.path.exists(path):
-            raise Exception("لم يتم العثور على الملف المحمل")
-
-        with open(path, 'rb') as f:
-            if mode == 'video':
-                await context.bot.send_video(chat_id=query.message.chat_id, video=f, write_timeout=600)
-            elif mode == 'audio':
-                await context.bot.send_audio(chat_id=query.message.chat_id, audio=f, title="Audio MP3")
-            elif mode == 'voice':
-                await context.bot.send_voice(chat_id=query.message.chat_id, voice=f)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
         
-        os.remove(path)
-        await msg.delete()
+        with open('video.mp4', 'rb') as video:
+            bot.send_video(message.chat.id, video)
+        
+        os.remove('video.mp4')
+        bot.delete_message(message.chat.id, msg.message_id)
+        
     except Exception as e:
-        await context.bot.send_message(chat_id=query.message.chat_id, text=f"❌ حدث خطأ: {e}")
+        bot.edit_message_text(f"❌ حدث خطأ أثناء التحميل: {str(e)}", message.chat.id, msg.message_id)
 
-if __name__ == '__main__':
-    print("--- البوت الشامل يعمل الآن بنجاح ---")
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling()
+# ميزة المحاولة التلقائية لتجنب أخطاء الاتصال
+while True:
+    try:
+        print("Bot is starting...")
+        bot.polling(none_stop=True, timeout=60)
+    except Exception as e:
+        print(f"Error occurred: {e}. Restarting in 5 seconds...")
+        time.sleep(5)
